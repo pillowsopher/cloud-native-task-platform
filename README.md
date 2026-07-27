@@ -1,11 +1,15 @@
-# Cloud-Native Task Platform
+# Cloud-Native Uptime Monitor
 
-A small task-management app deployed three different ways to demonstrate the
-core DevOps stack: **Docker → Kubernetes (self-managed on EC2) → Serverless
-(Lambda)**, wired together with **GitLab CI/CD** and **Terraform**.
+A small uptime-monitoring app (submit URLs, get notified when they go down),
+built from scratch as a hands-on way to learn the DevOps stack: **Docker →
+Kubernetes (self-managed k3s on EC2) → Serverless (Lambda)**, wired together
+with **GitLab CI/CD** and **Terraform**.
 
+This repo is being built incrementally, one technology at a time, rather than
+generated all at once — see [Progress](#progress) for what's actually done
+vs. planned.
 
-## Architecture
+## Architecture (target — see Progress for current state)
 
 ```
                         ┌─────────────────────────┐
@@ -19,8 +23,8 @@ core DevOps stack: **Docker → Kubernetes (self-managed on EC2) → Serverless
 ┌───────▼────────────────────────┐                    ┌───────────▼───────────┐
 │  k3s cluster (EC2 t3.micro x2)  │                    │   Serverless path      │
 │  ┌──────────┐   ┌────────────┐  │                    │  API Gateway → Lambda  │
-│  │ api pod  │──▶│ worker pod │  │   task created ───▶ │  → DynamoDB            │
-│  │(Express) │   │ (BullMQ)   │  │   triggers SQS msg   │  → SES (sandbox)       │
+│  │ api pod  │──▶│ worker pod │  │  monitor down ───▶  │  → DynamoDB            │
+│  │(FastAPI) │   │  (Celery)  │  │  triggers SQS msg   │  → SES (sandbox)       │
 │  └────┬─────┘   └─────┬──────┘  │                    └────────────────────────┘
 │       │                │         │
 │  ┌────▼─────┐   ┌──────▼─────┐  │
@@ -33,6 +37,15 @@ core DevOps stack: **Docker → Kubernetes (self-managed on EC2) → Serverless
          │ IAM roles, ECR repo, Lambda + DynamoDB + SQS
 ```
 
+## What it does
+
+You submit a URL to watch (name, URL, check interval). A periodic background
+job (Celery Beat) checks it on schedule and flips its status between
+`up`/`down`; a status change to `down` triggers an email notification. The
+same "something reacts to an event" idea is re-implemented a second way via
+an AWS Lambda triggered by SQS, to compare the container-worker approach
+against a serverless one.
+
 ## Why k3s instead of EKS
 
 EKS charges ~$0.10/hr for the control plane even on free tier — not actually
@@ -44,9 +57,10 @@ Ingress, ConfigMaps/Secrets, HPA — for $0.
 
 | Layer | Tech | Purpose |
 |---|---|---|
-| API service | Node.js/Express | CRUD for tasks, publishes events |
-| Worker service | Node.js + BullMQ | Consumes queue, sends notifications |
-| Serverless path | Lambda + API Gateway + DynamoDB + SQS | Alternate notification dispatch, shows serverless vs. container tradeoffs |
+| API service | Python/FastAPI | CRUD for monitors, validation via Pydantic |
+| Worker service | Python + Celery + Redis | Periodic checks, sends notifications on status change |
+| Database | Postgres | Persists monitors (replaces in-memory storage once wired up) |
+| Serverless path | Lambda (Python) + API Gateway + DynamoDB + SQS | Alternate notification dispatch, shows serverless vs. container tradeoffs |
 | Containerization | Docker (multi-stage builds) | api + worker images |
 | Orchestration | k3s on EC2 (free tier) | Deployments, Services, Ingress, HPA |
 | CI/CD | GitLab CI | lint/test → build → push to ECR → deploy to k3s + Lambda |
@@ -56,27 +70,46 @@ Ingress, ConfigMaps/Secrets, HPA — for $0.
 ## Repo layout
 
 ```
-services/api/          Express API (Dockerfile + source)
-services/worker/        Notification worker (Dockerfile + source)
-lambda/notification-dispatcher/   Serverless alternative path
-k8s/                    Kubernetes manifests (namespace, deployments, svc, ingress, hpa)
-terraform/              IaC for AWS infra (EC2, VPC, IAM, ECR, Lambda, DynamoDB)
-monitoring/             Prometheus/Grafana manifests
-.gitlab-ci.yml          Pipeline: lint → test → build → push → deploy
-docker-compose.yml      Local dev environment
+services/api/           FastAPI app (source of truth, actively built)
+reference/               Original auto-generated Node.js/Express scaffold,
+                          kept as an answer key while services/ is rebuilt
+                          from scratch by hand
 ```
 
-## Local development
+`reference/` is not deployed and not kept in sync with `services/` — it's a
+snapshot of one possible finished shape, useful to compare against if stuck,
+not the live implementation.
 
-```bash
-docker compose up --build
-curl -X POST localhost:3000/tasks -H 'content-type: application/json' -d '{"title":"demo","notify_email":"you@example.com"}'
+## Progress
+
+- [x] **Phase 1 — API from scratch**: FastAPI app with full CRUD
+      (`POST/GET/PATCH/DELETE /monitors`), Pydantic validation, in-memory
+      storage.
+- [ ] **Phase 2 — Docker**: containerize the API.
+- [ ] **Phase 3 — Docker Compose**: wire up Postgres + Redis locally,
+      replace in-memory storage.
+- [ ] **Phase 4 — Kubernetes (k3s)**: Deployments, Services, ConfigMaps/
+      Secrets, Ingress, HPA.
+- [ ] **Phase 5 — AWS fundamentals**: IAM, EC2, VPC/security groups.
+- [ ] **Phase 6 — Terraform**: provision the EC2/k3s infra as code.
+- [ ] **Phase 7 — Lambda/serverless**: SQS-triggered notification path.
+- [ ] **Phase 8 — GitLab CI/CD**: automated lint/test/build/deploy pipeline.
+- [ ] **Phase 9 — Monitoring**: Prometheus + Grafana.
+
+## Local development (current)
+
+```powershell
+cd services\api
+venv\Scripts\activate
+uvicorn src.main:app --reload --port 3000
 ```
 
-## Deployment path (high level)
+Then, from another terminal:
 
-1. `terraform apply` in `terraform/` — provisions VPC, 2x EC2 instances, IAM roles, ECR repo, Lambda + DynamoDB + SQS.
-2. Install k3s on the EC2 instances (`terraform/scripts/install-k3s.sh` runs via user-data).
-3. GitLab CI builds Docker images, pushes to ECR, runs `kubectl apply -f k8s/` and `sam deploy` for the Lambda path.
-4. Ingress (Traefik, bundled with k3s) exposes the API on the EC2 public IP.
+```powershell
+$body = @{ name = "my site"; url = "https://example.com" } | ConvertTo-Json
+Invoke-RestMethod -Uri http://localhost:3000/monitors -Method Post -ContentType "application/json" -Body $body
+Invoke-RestMethod -Uri http://localhost:3000/monitors -Method Get
+```
 
+Interactive API docs (auto-generated by FastAPI): http://localhost:3000/docs
