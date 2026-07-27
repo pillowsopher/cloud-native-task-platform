@@ -4,11 +4,6 @@ A small task-management app deployed three different ways to demonstrate the
 core DevOps stack: **Docker → Kubernetes (self-managed on EC2) → Serverless
 (Lambda)**, wired together with **GitLab CI/CD** and **Terraform**.
 
-## Why this project exists
-
-Built to have a real, defensible answer to "have you built an enterprise-grade
-app on Kubernetes/AWS/Docker/CI-CD?" — every piece here is something you can
-open and explain in an interview, not a toy tutorial repo.
 
 ## Architecture
 
@@ -43,8 +38,7 @@ open and explain in an interview, not a toy tutorial repo.
 EKS charges ~$0.10/hr for the control plane even on free tier — not actually
 free. **k3s** (lightweight Kubernetes) running on two `t3.micro`/`t2.micro`
 EC2 free-tier instances gives you a real cluster — Deployments, Services,
-Ingress, ConfigMaps/Secrets, HPA — for $0. Document this tradeoff explicitly;
-it's a great interview talking point on cost-aware infra decisions.
+Ingress, ConfigMaps/Secrets, HPA — for $0.
 
 ## Components
 
@@ -86,6 +80,3 @@ curl -X POST localhost:3000/tasks -H 'content-type: application/json' -d '{"titl
 3. GitLab CI builds Docker images, pushes to ECR, runs `kubectl apply -f k8s/` and `sam deploy` for the Lambda path.
 4. Ingress (Traefik, bundled with k3s) exposes the API on the EC2 public IP.
 
-## Status
-
-Scaffolded — see TODOs in each service for what's stubbed vs. implemented.
