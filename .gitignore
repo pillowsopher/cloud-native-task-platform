@@ -2,16 +2,19 @@ node_modules/
 .env
 *.log
 
+# Local tool installers, not project source
+dependencies/
+
 # Terraform
-terraform/.terraform/
-terraform/*.tfstate
-terraform/*.tfstate.backup
-terraform/.terraform.lock.hcl
-terraform/*.tfvars
+**/terraform/.terraform/
+**/terraform/*.tfstate
+**/terraform/*.tfstate.backup
+**/terraform/.terraform.lock.hcl
+**/terraform/*.tfvars
 
 # Lambda build artifacts
-lambda/**/function.zip
-lambda/**/node_modules/
+**/lambda/**/function.zip
+**/lambda/**/node_modules/
 
 # k8s real secrets (keep only the .example.yaml in git)
-k8s/02-secret.yaml
+**/k8s/02-secret.yaml
