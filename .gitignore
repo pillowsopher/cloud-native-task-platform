@@ -5,6 +5,9 @@ node_modules/
 # Local tool installers, not project source
 dependencies/
 
+# Claude Code local session/config data
+.claude/
+
 # Terraform
 **/terraform/.terraform/
 **/terraform/*.tfstate
