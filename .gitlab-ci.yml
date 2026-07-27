@@ -1,0 +1,103 @@
+stages:
+  - lint
+  - test
+  - build
+  - push
+  - deploy
+
+variables:
+  AWS_REGION: us-east-1
+  ECR_REGISTRY: ${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com
+  API_IMAGE: ${ECR_REGISTRY}/task-platform-api
+  WORKER_IMAGE: ${ECR_REGISTRY}/task-platform-worker
+
+# Populate these in GitLab CI/CD variables (Settings > CI/CD > Variables),
+# masked/protected: AWS_ACCOUNT_ID, AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY,
+# KUBE_CONFIG (base64 kubeconfig for the k3s cluster).
+
+lint-api:
+  stage: lint
+  image: node:20-alpine
+  script:
+    - cd services/api && npm install && npm run lint
+  rules:
+    - changes: [services/api/**/*]
+
+lint-worker:
+  stage: lint
+  image: node:20-alpine
+  script:
+    - cd services/worker && npm install && npm run lint
+  rules:
+    - changes: [services/worker/**/*]
+
+test-api:
+  stage: test
+  image: node:20-alpine
+  script:
+    - cd services/api && npm install && npm test
+  rules:
+    - changes: [services/api/**/*]
+
+.docker_build: &docker_build
+  stage: build
+  image: docker:27
+  services: [docker:27-dind]
+  before_script:
+    - apk add --no-cache aws-cli
+    - aws ecr get-login-password --region "$AWS_REGION" | docker login --username AWS --password-stdin "$ECR_REGISTRY"
+
+build-push-api:
+  <<: *docker_build
+  stage: push
+  script:
+    - docker build -t "$API_IMAGE:$CI_COMMIT_SHORT_SHA" -t "$API_IMAGE:latest" services/api
+    - docker push "$API_IMAGE:$CI_COMMIT_SHORT_SHA"
+    - docker push "$API_IMAGE:latest"
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "main"'
+
+build-push-worker:
+  <<: *docker_build
+  stage: push
+  script:
+    - docker build -t "$WORKER_IMAGE:$CI_COMMIT_SHORT_SHA" -t "$WORKER_IMAGE:latest" services/worker
+    - docker push "$WORKER_IMAGE:$CI_COMMIT_SHORT_SHA"
+    - docker push "$WORKER_IMAGE:latest"
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "main"'
+
+deploy-k3s:
+  stage: deploy
+  image: bitnami/kubectl:1.30
+  script:
+    - echo "$KUBE_CONFIG" | base64 -d > kubeconfig.yaml
+    - export KUBECONFIG=kubeconfig.yaml
+    - sed -i "s|<ECR_REPO_URL>/task-api|$API_IMAGE|" k8s/05-api.yaml
+    - sed -i "s|<ECR_REPO_URL>/task-worker|$WORKER_IMAGE|" k8s/06-worker.yaml
+    - kubectl apply -f k8s/00-namespace.yaml
+    - kubectl apply -f k8s/
+    - kubectl -n task-platform set image deployment/api api="$API_IMAGE:$CI_COMMIT_SHORT_SHA"
+    - kubectl -n task-platform set image deployment/worker worker="$WORKER_IMAGE:$CI_COMMIT_SHORT_SHA"
+    - kubectl -n task-platform rollout status deployment/api
+    - kubectl -n task-platform rollout status deployment/worker
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "main"'
+  needs: [build-push-api, build-push-worker]
+
+deploy-lambda:
+  stage: deploy
+  image: node:20-alpine
+  before_script:
+    - apk add --no-cache aws-cli zip
+  script:
+    - cd lambda/notification-dispatcher
+    - npm install --omit=dev
+    - zip -r function.zip index.js node_modules package.json
+    - aws lambda update-function-code
+        --function-name task-platform-notification-dispatcher
+        --zip-file fileb://function.zip
+        --region "$AWS_REGION"
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "main"'
+      changes: [lambda/notification-dispatcher/**/*]
