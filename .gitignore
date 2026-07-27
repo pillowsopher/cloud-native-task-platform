@@ -10,6 +10,9 @@ node_modules/
 # Local tool installers, not project source
 dependencies/
 
+# Local-only answer-key scaffold, not part of the actual project
+/reference/
+
 # Claude Code local session/config data
 .claude/
 
