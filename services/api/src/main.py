@@ -38,7 +38,7 @@ class MonitorOut(BaseModel):
     check_interval_seconds: int
     notify_email: str | None
     status: str
-    last_checked_at: str | None
+    last_checked_at: datetime | None
 
 
 """ API Section """

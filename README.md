@@ -70,17 +70,26 @@ Ingress, ConfigMaps/Secrets, HPA — for $0.
 ## Repo layout
 
 ```
-docker-compose.yml        Postgres + Redis + api, wired together for local dev
+docker-compose.yml        Postgres + Redis + api + worker + beat, wired
+                          together for local dev
 .env.example               Template for required secrets (copy to .env, gitignored)
 services/api/             FastAPI app (source of truth, actively built)
   src/main.py              Route handlers + Pydantic request/response models
   src/database.py          SQLAlchemy engine/session setup, reads DATABASE_URL
   src/models.py             SQLAlchemy ORM model (Monitor -> monitors table)
   requirements.txt         Pinned dependencies (pip)
-  Dockerfile                Multi-stage build (builder stage installs deps,
-                          runtime stage stays lean)
+  Dockerfile                Multi-stage, non-root runtime user
   .dockerignore             Excludes venv/, __pycache__/, etc. from the
                           image build context
+services/worker/          Celery worker + Beat scheduler (same image, two
+                          different container commands)
+  src/celery_app.py         Celery app instance, broker/backend config,
+                          beat_schedule
+  src/tasks.py               dispatch_due_checks (fan-out), check_monitor
+                          (real HTTP check), send_notification
+  src/database.py, models.py  Own copies, not shared with services/api/ —
+                          each service is independently buildable/deployable
+  requirements.txt, Dockerfile, .dockerignore  Same pattern as services/api/
 reference/                 Original auto-generated Node.js/Express scaffold,
                           kept locally (gitignored, not pushed) as an
                           answer key while services/ is rebuilt from
@@ -104,12 +113,13 @@ not the live implementation.
       monitors now stored via SQLAlchemy/Postgres instead of an in-memory
       list, secrets sourced from a gitignored `.env` instead of being
       hardcoded.
-- [ ] **Worker service — Celery + Celery Beat**: not tied to a numbered
-      infra phase (it's app code, not infra), but needed before Phase 4 —
-      Kubernetes needs a worker to actually deploy alongside the api.
-      Celery Beat specifically, not just a plain worker: periodic scheduled
-      checks are the whole point of the uptime-monitor use case, not
-      one-off jobs.
+- [x] **Worker service — Celery + Celery Beat**: not tied to a numbered
+      infra phase (it's app code, not infra), but needed before Phase 4.
+      Beat dispatches a due-check tick every 15s; the worker performs real
+      HTTP checks per monitor honoring its own `check_interval_seconds`,
+      writes `status`/`last_checked_at` back to Postgres, and fires a
+      notification only on a transition to `down` (not on every check
+      while already down). Both `api` and `worker` run as a non-root user.
 - [ ] **Phase 4 — Kubernetes (k3s)**: Deployments, Services, ConfigMaps/
       Secrets, Ingress, HPA — for both api and worker.
 - [ ] **Phase 5 — AWS fundamentals**: IAM, EC2, VPC/security groups.

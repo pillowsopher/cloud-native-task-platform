@@ -34,5 +34,32 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+  worker:
+    build: ./services/worker
+    command: celery -A src.celery_app worker --loglevel=info
+    environment:
+      - DATABASE_URL=postgresql://postgres:${POSTGRES_PASSWORD}@postgres:5432/uptime_monitor
+      - REDIS_URL=redis://redis:6379/0
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  # We had to add DATABASE_URL here, even though beat doesn't use DB, only talks to Redis
+  # since we have set include=["src.tasks"] in Celery.py
+  # Which imports tasks.py, if we don't add DATABASE_URL, it won't start
+  beat:
+    build: ./services/worker
+    command: celery -A src.celery_app beat --loglevel=info
+    environment:
+      - DATABASE_URL=postgresql://postgres:${POSTGRES_PASSWORD}@postgres:5432/uptime_monitor
+      - REDIS_URL=redis://redis:6379/0
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
 volumes:
   pgdata:
