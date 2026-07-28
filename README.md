@@ -20,13 +20,13 @@ vs. planned.
                                     │
         ┌───────────────────────────┴───────────────────────────┐
         │                                                         │
-┌───────▼────────────────────────┐                    ┌───────────▼───────────┐
-│  k3s cluster (EC2 t3.micro x2)  │                    │   Serverless path      │
-│  ┌──────────┐   ┌────────────┐  │                    │  API Gateway → Lambda  │
-│  │ api pod  │──▶│ worker pod │  │  monitor down ───▶  │  → DynamoDB            │
-│  │(FastAPI) │   │  (Celery)  │  │  triggers SQS msg   │  → SES (sandbox)       │
-│  └────┬─────┘   └─────┬──────┘  │                    └────────────────────────┘
-│       │                │         │
+┌───────▼────────────────────────┐                    ┌────────────▼────────────┐
+│  k3s cluster (EC2 t3.micro x2)  │                    │     Serverless path      │
+│  ┌──────────┐   ┌────────────┐  │                    │      SQS → Lambda        │
+│  │ api pod  │──▶│ worker pod │  │  monitor down ───▶  │      → DynamoDB          │
+│  │(FastAPI) │   │  (Celery)  │  │  triggers SQS msg   │  (logs notification;     │
+│  └────┬─────┘   └─────┬──────┘  │                    │   no SES/real email)     │
+│       │                │         │                    └──────────────────────────┘
 │  ┌────▼─────┐   ┌──────▼─────┐  │
 │  │ Postgres │   │   Redis    │  │
 │  │ (StatefulSet)│ (Deployment)│  │
@@ -60,7 +60,7 @@ Ingress, ConfigMaps/Secrets, HPA — for $0.
 | API service | Python/FastAPI | CRUD for monitors, validation via Pydantic |
 | Worker service | Python + Celery + Redis | Periodic checks, sends notifications on status change |
 | Database | Postgres | Persists monitors via SQLAlchemy ORM |
-| Serverless path | Lambda (Python) + API Gateway + DynamoDB + SQS | Alternate notification dispatch, shows serverless vs. container tradeoffs |
+| Serverless path | Lambda (Python), SQS-triggered + DynamoDB | Alternate notification dispatch, shows serverless vs. container tradeoffs. No API Gateway — event-triggered, not HTTP-triggered. Logs notifications rather than sending real email (no SES, deliberately, to stay free/simple) |
 | Containerization | Docker (multi-stage builds) | api + worker images |
 | Orchestration | k3s on EC2 (free tier) | Deployments, Services, Ingress, HPA |
 | CI/CD | GitLab CI | lint/test → build → push to ECR → deploy to k3s + Lambda |
@@ -104,13 +104,27 @@ not the live implementation.
       monitors now stored via SQLAlchemy/Postgres instead of an in-memory
       list, secrets sourced from a gitignored `.env` instead of being
       hardcoded.
+- [ ] **Worker service — Celery + Celery Beat**: not tied to a numbered
+      infra phase (it's app code, not infra), but needed before Phase 4 —
+      Kubernetes needs a worker to actually deploy alongside the api.
+      Celery Beat specifically, not just a plain worker: periodic scheduled
+      checks are the whole point of the uptime-monitor use case, not
+      one-off jobs.
 - [ ] **Phase 4 — Kubernetes (k3s)**: Deployments, Services, ConfigMaps/
-      Secrets, Ingress, HPA.
+      Secrets, Ingress, HPA — for both api and worker.
 - [ ] **Phase 5 — AWS fundamentals**: IAM, EC2, VPC/security groups.
-- [ ] **Phase 6 — Terraform**: provision the EC2/k3s infra as code.
+- [ ] **Phase 6 — Terraform**: provision the EC2/k3s infra as code,
+      including a remote state backend (S3 + DynamoDB lock table) —
+      standard practice once more than one machine/person touches the
+      infra, and a common interview topic.
 - [ ] **Phase 7 — Lambda/serverless**: SQS-triggered notification path.
+- [ ] **API test suite (pytest)**: also not tied to a numbered infra phase —
+      needed before/during Phase 8, since a CI pipeline with an empty test
+      stage isn't much of one.
 - [ ] **Phase 8 — GitLab CI/CD**: automated lint/test/build/deploy pipeline.
-- [ ] **Phase 9 — Monitoring**: Prometheus + Grafana.
+- [ ] **Phase 9 — Monitoring**: Prometheus + Grafana deployed, *and* the
+      API instrumented with its own `/metrics` endpoint (`prometheus-client`)
+      — without this there's nothing app-specific for Prometheus to scrape.
 
 ## Running the full stack (current)
 
