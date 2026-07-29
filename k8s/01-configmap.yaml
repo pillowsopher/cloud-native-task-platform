@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: uptime-monitor-config
+  namespace: uptime-monitor
+data:
+  REDIS_URL: "redis://redis:6379/0"

@@ -29,3 +29,6 @@ dependencies/
 
 # k8s real secrets (keep only the .example.yaml in git)
 **/k8s/02-secret.yaml
+
+# Local-only workaround for Docker Desktop Kubernetes on this machine, not portable
+/scripts/k8s-load-image.ps1

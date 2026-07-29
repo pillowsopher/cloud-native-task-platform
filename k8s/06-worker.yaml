@@ -1,0 +1,52 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: worker
+  namespace: uptime-monitor
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: worker
+  template:
+    metadata:
+      labels:
+        app: worker
+    spec:
+      containers:
+        - name: worker
+          image: uptime-monitor-worker:latest
+          imagePullPolicy: IfNotPresent
+          command:
+            ["celery", "-A", "src.celery_app", "worker", "--loglevel=info"]
+          envFrom:
+            - secretRef:
+                name: uptime-monitor-secrets
+            - configMapRef:
+                name: uptime-monitor-config
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: beat
+  namespace: uptime-monitor
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: beat
+  template:
+    metadata:
+      labels:
+        app: beat
+    spec:
+      containers:
+        - name: beat
+          image: uptime-monitor-worker:latest
+          imagePullPolicy: IfNotPresent
+          command: ["celery", "-A", "src.celery_app", "beat", "--loglevel=info"]
+          envFrom:
+            - secretRef:
+                name: uptime-monitor-secrets
+            - configMapRef:
+                name: uptime-monitor-config
