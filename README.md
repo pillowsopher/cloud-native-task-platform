@@ -120,8 +120,14 @@ not the live implementation.
       writes `status`/`last_checked_at` back to Postgres, and fires a
       notification only on a transition to `down` (not on every check
       while already down). Both `api` and `worker` run as a non-root user.
-- [ ] **Phase 4 — Kubernetes (k3s)**: Deployments, Services, ConfigMaps/
-      Secrets, Ingress, HPA — for both api and worker.
+- [x] **Phase 4 — Kubernetes (k3s)**: Deployments, Services, ConfigMaps/
+      Secrets for postgres/redis/api/worker/beat, `Ingress` routing to the
+      api service via ingress-nginx, and `HorizontalPodAutoscaler`s for api
+      (2-5 replicas) and worker (1-3 replicas) on CPU utilization, backed by
+      metrics-server. `beat` stays a fixed single replica (no HPA) since
+      more than one Celery Beat scheduler would double-dispatch tasks.
+      Verified end-to-end on a local cluster: created a monitor through the
+      Ingress, watched the worker check it and flip status to `down`.
 - [ ] **Phase 5 — AWS fundamentals**: IAM, EC2, VPC/security groups.
 - [ ] **Phase 6 — Terraform**: provision the EC2/k3s infra as code,
       including a remote state backend (S3 + DynamoDB lock table) —

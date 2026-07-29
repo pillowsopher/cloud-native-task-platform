@@ -18,12 +18,26 @@ spec:
           image: uptime-monitor-worker:latest
           imagePullPolicy: IfNotPresent
           command:
-            ["celery", "-A", "src.celery_app", "worker", "--loglevel=info"]
+            [
+              "celery",
+              "-A",
+              "src.celery_app",
+              "worker",
+              "--loglevel=info",
+              "--concurrency=4",
+            ]
           envFrom:
             - secretRef:
                 name: uptime-monitor-secrets
             - configMapRef:
                 name: uptime-monitor-config
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 250m
+              memory: 300Mi
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -50,3 +64,10 @@ spec:
                 name: uptime-monitor-secrets
             - configMapRef:
                 name: uptime-monitor-config
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 100m
+              memory: 128Mi
