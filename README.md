@@ -128,7 +128,13 @@ not the live implementation.
       more than one Celery Beat scheduler would double-dispatch tasks.
       Verified end-to-end on a local cluster: created a monitor through the
       Ingress, watched the worker check it and flip status to `down`.
-- [ ] **Phase 5 — AWS fundamentals**: IAM, EC2, VPC/security groups.
+- [x] **Phase 5 — AWS fundamentals**: created a personal IAM Identity
+      Center user (SSO, no long-lived access keys) with a break-glass IAM
+      admin user as backup; built a VPC by hand (public subnet, internet
+      gateway, route table, security group); launched EC2 instances into
+      it and confirmed SSH access. These EC2 instances were for learning
+      only and have been terminated — Terraform provisions the real
+      k3s instances as code in Phase 6.
 - [ ] **Phase 6 — Terraform**: provision the EC2/k3s infra as code,
       including a remote state backend (S3 + DynamoDB lock table) —
       standard practice once more than one machine/person touches the
