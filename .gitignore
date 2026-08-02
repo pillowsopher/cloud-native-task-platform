@@ -18,11 +18,12 @@ dependencies/
 .claude/
 
 # Terraform
-**/terraform/.terraform/
-**/terraform/*.tfstate
-**/terraform/*.tfstate.backup
-**/terraform/.terraform.lock.hcl
-**/terraform/*.tfvars
+**/.terraform/
+**/*.tfstate
+**/*.tfstate.backup
+**/.terraform.lock.hcl
+**/*.tfvars
+**/backend.hcl
 
 # Lambda build artifacts
 **/lambda/**/function.zip
