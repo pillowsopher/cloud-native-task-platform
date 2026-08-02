@@ -143,6 +143,13 @@ not the live implementation.
       (previously built by hand), plus both EC2 instances - verified
       with a real SSH login. `my_ip` is a variable read from a gitignored
       `terraform.tfvars`, kept out of committed code.
+- [ ] **Phase 6.5 — Deploy to the real k3s cluster**: install k3s itself
+      on the Terraform-provisioned `k3s-server`/`k3s-agent` EC2 instances
+      and join them into a cluster, then deploy the Phase 4 manifests
+      (postgres, redis, api, worker, beat, ingress, HPA) there. Closes
+      the gap between "infra exists" (Phase 6) and "app actually runs
+      on it" — Phase 4 was only ever verified against Docker Desktop's
+      local Kubernetes as a stand-in, not the real target.
 - [ ] **Phase 7 — Lambda/serverless**: SQS-triggered notification path.
 - [ ] **API test suite (pytest)**: also not tied to a numbered infra phase —
       needed before/during Phase 8, since a CI pipeline with an empty test
