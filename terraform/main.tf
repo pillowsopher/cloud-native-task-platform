@@ -90,6 +90,30 @@ resource "aws_security_group" "main" {
     cidr_blocks = ["0.0.0.0/0"]
   }
 
+    ingress {
+    description = "k3s API (agent join + ongoing cluster traffic)"
+    from_port   = 6443
+    to_port     = 6443
+    protocol    = "tcp"
+    self        = true
+  }
+
+  ingress {
+    description = "Flannel VXLAN (pod networking between nodes)"
+    from_port   = 8472
+    to_port     = 8472
+    protocol    = "udp"
+    self        = true
+  }
+
+  ingress {
+    description = "kubelet"
+    from_port   = 10250
+    to_port     = 10250
+    protocol    = "tcp"
+    self        = true
+  }
+
   egress {
     from_port = 0
     to_port = 0
@@ -108,6 +132,7 @@ resource "aws_instance" "k3s_server" {
   key_name = "uptime-monitor-key"
   subnet_id = aws_subnet.public.id
   vpc_security_group_ids = [aws_security_group.main.id]
+  iam_instance_profile = aws_iam_instance_profile.ec2_ecr.name
 
   tags = {
     Name = "k3s-server"
@@ -120,8 +145,54 @@ resource "aws_instance" "k3s_agent" {
   key_name = "uptime-monitor-key"
   subnet_id = aws_subnet.public.id
   vpc_security_group_ids = [aws_security_group.main.id]
+  iam_instance_profile = aws_iam_instance_profile.ec2_ecr.name
 
   tags = {
     Name = "k3s-agent"
   }
+}
+
+resource "aws_ecr_repository" "api" {
+  name = "uptime-monitor-api"
+  image_tag_mutability = "MUTABLE"
+
+  image_scanning_configuration {
+    scan_on_push = true
+  }
+}
+
+resource "aws_ecr_repository" "worker" {
+  name = "uptime-monitor-worker"
+  image_tag_mutability = "MUTABLE"
+
+  image_scanning_configuration {
+    scan_on_push = true
+  }
+}
+
+resource "aws_iam_role" "ec2_ecr" {
+  name = "uptime-monitor-ec2-ecr-role"
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Action    = "sts:AssumeRole"
+        Effect    = "Allow"
+        Principal = {
+          Service = "ec2.amazonaws.com"
+        }
+      }
+    ]
+  })
+}
+
+resource "aws_iam_role_policy_attachment" "ec2_ecr_readonly" {
+  role       = aws_iam_role.ec2_ecr.name
+  policy_arn = "arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryReadOnly"
+}
+
+resource "aws_iam_instance_profile" "ec2_ecr" {
+  name = "uptime-monitor-ec2-ecr-profile"
+  role = aws_iam_role.ec2_ecr.name
 }
