@@ -143,13 +143,22 @@ not the live implementation.
       (previously built by hand), plus both EC2 instances - verified
       with a real SSH login. `my_ip` is a variable read from a gitignored
       `terraform.tfvars`, kept out of committed code.
-- [ ] **Phase 6.5 — Deploy to the real k3s cluster**: install k3s itself
-      on the Terraform-provisioned `k3s-server`/`k3s-agent` EC2 instances
-      and join them into a cluster, then deploy the Phase 4 manifests
-      (postgres, redis, api, worker, beat, ingress, HPA) there. Closes
-      the gap between "infra exists" (Phase 6) and "app actually runs
-      on it" — Phase 4 was only ever verified against Docker Desktop's
-      local Kubernetes as a stand-in, not the real target.
+- [x] **Phase 6.5 — Deploy to the real k3s cluster**: installed k3s on
+      both Terraform-provisioned EC2 instances and joined them (a swap
+      file was needed on `k3s-server` - `t3.micro`'s 1GB RAM wasn't
+      enough for the control plane alone). Added ECR repos + an IAM
+      role/instance profile so the instances can pull images, and a
+      k8s `imagePullSecrets` entry (manually refreshed, ~12h token
+      lifetime - see `scripts/ecr-login.ps1` for the same problem on
+      the push side) since a proper kubelet credential-provider plugin
+      was out of scope for this pass. Switched the Ingress to
+      `traefik` (k3s's built-in default) instead of the `nginx` used
+      for local testing. Verified end-to-end through the real Ingress:
+      created a monitor, watched it flip to `down`. The manifests now
+      target the real cluster only - local Docker Desktop testing
+      (Phase 4) served its purpose and isn't being kept in sync
+      further. Metrics-server was never installed on this cluster, so
+      the HPA objects exist but can't compute utilization yet.
 - [ ] **Phase 7 — Lambda/serverless**: SQS-triggered notification path.
 - [ ] **API test suite (pytest)**: also not tied to a numbered infra phase —
       needed before/during Phase 8, since a CI pipeline with an empty test

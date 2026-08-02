@@ -4,7 +4,7 @@ metadata:
   name: api
   namespace: uptime-monitor
 spec:
-  ingressClassName: nginx
+  ingressClassName: traefik
   rules:
     - http:
         paths:

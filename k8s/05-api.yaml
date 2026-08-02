@@ -13,10 +13,12 @@ spec:
       labels:
         app: api
     spec:
+      imagePullSecrets:
+        - name: ecr-registry-credentials
       containers:
         - name: api
-          image: uptime-monitor-api:latest
-          imagePullPolicy: IfNotPresent
+          image: <AWS_ACCOUNT_ID>.dkr.ecr.ap-south-1.amazonaws.com/uptime-monitor-api:latest
+          imagePullPolicy: Always
           ports:
             - containerPort: 3000
           envFrom:

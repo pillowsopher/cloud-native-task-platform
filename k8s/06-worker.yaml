@@ -13,10 +13,12 @@ spec:
       labels:
         app: worker
     spec:
+      imagePullSecrets:
+        - name: ecr-registry-credentials
       containers:
         - name: worker
-          image: uptime-monitor-worker:latest
-          imagePullPolicy: IfNotPresent
+          image: <AWS_ACCOUNT_ID>.dkr.ecr.ap-south-1.amazonaws.com/uptime-monitor-worker:latest
+          imagePullPolicy: Always
           command:
             [
               "celery",
@@ -54,10 +56,12 @@ spec:
       labels:
         app: beat
     spec:
+      imagePullSecrets:
+        - name: ecr-registry-credentials
       containers:
         - name: beat
-          image: uptime-monitor-worker:latest
-          imagePullPolicy: IfNotPresent
+          image: <AWS_ACCOUNT_ID>.dkr.ecr.ap-south-1.amazonaws.com/uptime-monitor-worker:latest
+          imagePullPolicy: Always
           command: ["celery", "-A", "src.celery_app", "beat", "--loglevel=info"]
           envFrom:
             - secretRef:
