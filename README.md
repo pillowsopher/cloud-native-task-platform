@@ -159,11 +159,49 @@ not the live implementation.
       (Phase 4) served its purpose and isn't being kept in sync
       further. Metrics-server was never installed on this cluster, so
       the HPA objects exist but can't compute utilization yet.
+
+      **Follow-up:** the k3s install/join process described above was
+      done by hand over SSH - deliberately, to actually understand what
+      k3s bootstrap involves before automating it (see the Phase 8 note
+      below for the reasoning). It's now automated via Terraform
+      `user_data` on both instances, run automatically on first boot:
+      - The **server** needs a join token; instead of letting k3s
+        generate a random one and having the agent fetch it after the
+        fact, both instances are given the *same* fixed token up front,
+        via a `random_password` resource (state-only, never in a
+        tracked file) passed through `K3S_TOKEN`. This sidesteps the
+        "agent needs to read something the server generated" problem
+        entirely.
+      - The **agent** needs the server's address, which Terraform
+        provides directly (`aws_instance.k3s_server.private_ip`) - this
+        also makes Terraform create the server first, since the agent's
+        `user_data` now depends on that value.
+      - The agent doesn't need to *wait* for the server to finish
+        booting first: k3s's own agent already retries with backoff
+        until the server responds (observed directly while debugging
+        the original manual join), so both instances can boot
+        simultaneously without any extra ordering logic.
+      - Applying this change **replaces** both EC2 instances (`user_data`
+        only ever runs on first boot, so changing it can't take effect
+        any other way) - a deliberate rebuild to prove the automation
+        actually reproduces a working cluster from nothing, not just a
+        side effect to route around.
 - [ ] **Phase 7 — Lambda/serverless**: SQS-triggered notification path.
 - [ ] **API test suite (pytest)**: also not tied to a numbered infra phase —
       needed before/during Phase 8, since a CI pipeline with an empty test
       stage isn't much of one.
 - [ ] **Phase 8 — GitLab CI/CD**: automated lint/test/build/deploy pipeline.
+      Specifically needs to replace these manual steps from Phase 6.5:
+  - Build + push `api`/`worker` images to ECR (currently: `docker build`,
+    `docker tag`, `docker push` by hand locally).
+  - Copy k8s manifests to `k3s-server` and `kubectl apply` them (currently:
+    `scp` the whole `k8s/` folder, `sed` the `<AWS_ACCOUNT_ID>` placeholder,
+    then `kubectl apply -f` each file by hand over SSH).
+  - Refresh the `ecr-registry-credentials` `imagePullSecrets` Secret before
+    its ~12h token expires (currently: manually re-run the `kubectl create
+    secret docker-registry ...` command). The more correct long-term fix is
+    a kubelet ECR credential-provider plugin instead of a Secret at all —
+    worth doing instead of just automating the manual refresh.
 - [ ] **Phase 9 — Monitoring**: Prometheus + Grafana deployed, *and* the
       API instrumented with its own `/metrics` endpoint (`prometheus-client`)
       — without this there's nothing app-specific for Prometheus to scrape.
@@ -218,6 +256,38 @@ not committed. To reproduce a working setup from scratch:
   terraform init -backend-config=backend.hcl
   terraform apply
   ```
+
+## Known issues / environment workarounds
+
+None of these are conceptual problems with the project — they're quirks of
+this specific Windows/Docker Desktop machine, documented so future-me (or
+anyone else) doesn't waste time rediscovering them:
+
+- **Docker Desktop's image store is separate from its Kubernetes node's
+  containerd**, unless "Use containerd for pulling and storing images" is
+  enabled — and enabling it breaks this machine's Kubernetes cluster from
+  starting at all. Workaround: `scripts/k8s-load-image.ps1` loads a locally
+  built image directly into the node's containerd via `nsenter` + `ctr`,
+  bypassing `docker build`'s separate store entirely. Local-only, gitignored.
+- **`docker login` fails with a 400 Bad Request** against ECR on this Docker
+  Desktop version (client-side bug — the credentials themselves are valid,
+  confirmed via a raw `curl` Basic-auth request). The official
+  `amazon-ecr-credential-helper` also fails separately ("credentials not
+  found in native keychain", a Windows-specific bug). Workaround:
+  `scripts/ecr-login.ps1` writes the base64 auth entry directly into
+  Docker's config, same as a working `docker login` would.
+- **PowerShell mangles `-backend-config=path`-style flags** passed to
+  native executables (Terraform, in our case) — wrap the whole flag in
+  quotes: `terraform init "-backend-config=backend.hcl"`.
+- **Windows PowerShell 5.1's `-Encoding utf8` writes a BOM**, which Docker's
+  Go-based JSON parser can't handle. Any script writing `~/.docker/config.json`
+  needs `[System.Text.UTF8Encoding]::new($false)` instead (see
+  `scripts/ecr-login.ps1`).
+- **`t3.micro`'s 1GB RAM isn't enough for k3s's control plane alone** —
+  the server would become unresponsive (API server hangs mid-TLS-handshake,
+  `"container runtime is down"` in the logs) without a swap file. Handled
+  automatically now via Terraform `user_data` on both instances, but worth
+  knowing why that swap file exists if you ever wonder.
 
 ## Running the full stack (current)
 

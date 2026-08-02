@@ -6,8 +6,12 @@ terraform {
       source = "hashicorp/aws"
       version = "~> 5.0"
     }
-  }
+    random = {
+      source  = "hashicorp/random"
+      version = "~> 3.6"
+    }
 
+  }
   backend "s3" {}
 }
 
@@ -133,6 +137,16 @@ resource "aws_instance" "k3s_server" {
   subnet_id = aws_subnet.public.id
   vpc_security_group_ids = [aws_security_group.main.id]
   iam_instance_profile = aws_iam_instance_profile.ec2_ecr.name
+    user_data = <<-EOF
+    #!/bin/bash
+    set -e
+    fallocate -l 1G /swapfile
+    chmod 600 /swapfile
+    mkswap /swapfile
+    swapon /swapfile
+    echo '/swapfile none swap sw 0 0' >> /etc/fstab
+    curl -sfL https://get.k3s.io | K3S_TOKEN=${random_password.k3s_token.result} sh -
+    EOF
 
   tags = {
     Name = "k3s-server"
@@ -146,6 +160,16 @@ resource "aws_instance" "k3s_agent" {
   subnet_id = aws_subnet.public.id
   vpc_security_group_ids = [aws_security_group.main.id]
   iam_instance_profile = aws_iam_instance_profile.ec2_ecr.name
+    user_data = <<-EOF
+    #!/bin/bash
+    set -e
+    fallocate -l 1G /swapfile
+    chmod 600 /swapfile
+    mkswap /swapfile
+    swapon /swapfile
+    echo '/swapfile none swap sw 0 0' >> /etc/fstab
+    curl -sfL https://get.k3s.io | K3S_URL=https://${aws_instance.k3s_server.private_ip}:6443 K3S_TOKEN=${random_password.k3s_token.result} sh -
+    EOF
 
   tags = {
     Name = "k3s-agent"
@@ -195,4 +219,9 @@ resource "aws_iam_role_policy_attachment" "ec2_ecr_readonly" {
 resource "aws_iam_instance_profile" "ec2_ecr" {
   name = "uptime-monitor-ec2-ecr-profile"
   role = aws_iam_role.ec2_ecr.name
+}
+
+resource "random_password" "k3s_token" {
+  length  = 32
+  special = false
 }
