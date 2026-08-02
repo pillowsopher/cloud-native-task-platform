@@ -135,10 +135,14 @@ not the live implementation.
       it and confirmed SSH access. These EC2 instances were for learning
       only and have been terminated — Terraform provisions the real
       k3s instances as code in Phase 6.
-- [ ] **Phase 6 — Terraform**: provision the EC2/k3s infra as code,
-      including a remote state backend (S3 + DynamoDB lock table) —
-      standard practice once more than one machine/person touches the
-      infra, and a common interview topic.
+- [x] **Phase 6 — Terraform**: `terraform/bootstrap/` creates the remote
+      state backend (S3 bucket + DynamoDB lock table) with local state,
+      since it can't depend on the backend it's creating. `terraform/`
+      (separate config, `backend "s3"` pointed at that bucket/table)
+      recreates Phase 5's VPC/subnet/IGW/route table/security group
+      (previously built by hand), plus both EC2 instances - verified
+      with a real SSH login. `my_ip` is a variable read from a gitignored
+      `terraform.tfvars`, kept out of committed code.
 - [ ] **Phase 7 — Lambda/serverless**: SQS-triggered notification path.
 - [ ] **API test suite (pytest)**: also not tied to a numbered infra phase —
       needed before/during Phase 8, since a CI pipeline with an empty test
@@ -147,6 +151,57 @@ not the live implementation.
 - [ ] **Phase 9 — Monitoring**: Prometheus + Grafana deployed, *and* the
       API instrumented with its own `/metrics` endpoint (`prometheus-client`)
       — without this there's nothing app-specific for Prometheus to scrape.
+
+## Local-only files (gitignored, recreate these yourself)
+
+A few files are required to actually run this project but are deliberately
+not committed. To reproduce a working setup from scratch:
+
+- **`k8s/02-secret.yaml`** — copy `k8s/01-secret.example.yaml` to
+  `k8s/02-secret.yaml` and fill in real values for `POSTGRES_PASSWORD` and
+  `DATABASE_URL` (must use the same password in both places — see the
+  Phase 4 debugging story in git history for what happens if they drift).
+- **AWS SSO profile** — run `aws configure sso` and name the profile
+  `uptime-monitor` (this exact name is referenced throughout `terraform/`
+  and by any AWS CLI commands used in this project). Requires an IAM
+  Identity Center permission set already assigned to your AWS account —
+  see Phase 5 in Progress above for how that was set up.
+- **EC2 key pair** — create one in the AWS Console named
+  `uptime-monitor-key` (must match `key_name` in `terraform/main.tf`),
+  download the `.pem`, and keep it somewhere local (referenced by full
+  path when SSHing, e.g. `ssh -i "C:\path\to\uptime-monitor-key.pem"
+  ubuntu@<instance-ip>`).
+- **`terraform/terraform.tfvars`** — create with your own public IP
+  (used to scope the security group's SSH rule to just you):
+  ```hcl
+  my_ip = "YOUR_PUBLIC_IP/32"
+  ```
+- **`terraform/backend.hcl`** — `terraform/main.tf` uses a deliberately
+  empty `backend "s3" {}` block (backend config can't reference variables
+  or data sources, so hardcoding real values there would mean committing
+  your AWS account ID). The actual values are supplied at `init` time from
+  this gitignored file instead:
+  ```hcl
+  bucket         = "uptime-monitor-terraform-state-<your-account-id>"
+  key            = "uptime-monitor/terraform.tfstate"
+  region         = "ap-south-1"
+  dynamodb_table = "uptime-monitor-terraform-lock"
+  encrypt        = true
+  profile        = "uptime-monitor"
+  ```
+- **Terraform state** — apply the bootstrap config first (creates the S3
+  bucket + DynamoDB table other Terraform state lives in, using local
+  state since it can't depend on a backend it's creating), then the main
+  config, passing the backend file explicitly:
+  ```powershell
+  cd terraform/bootstrap
+  terraform init
+  terraform apply
+
+  cd ..
+  terraform init -backend-config=backend.hcl
+  terraform apply
+  ```
 
 ## Running the full stack (current)
 
