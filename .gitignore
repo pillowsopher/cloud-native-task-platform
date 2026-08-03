@@ -7,6 +7,8 @@ node_modules/
 **/venv/
 **/__pycache__/
 **/*.pyc
+**/.pytest_cache/
+**/test.db
 
 # Local tool installers, not project source
 dependencies/
