@@ -186,7 +186,22 @@ not the live implementation.
         any other way) - a deliberate rebuild to prove the automation
         actually reproduces a working cluster from nothing, not just a
         side effect to route around.
-- [ ] **Phase 7 — Lambda/serverless**: SQS-triggered notification path.
+- [x] **Phase 7 — Lambda/serverless**: SQS-triggered notification path,
+      in a separate Terraform state (`terraform/serverless/`) from the
+      VPC/EC2 infra - logically distinct comparison path, not an
+      extension of the container architecture. `worker`'s
+      `send_notification` publishes to SQS (queue name only via a
+      ConfigMap, never the full URL - that has the account ID baked
+      in; resolved at runtime via `get_queue_url`) → triggers
+      `lambda/notifications/handler.py` → writes to DynamoDB. Includes
+      a dead-letter queue (`maxReceiveCount = 3`) after directly
+      hitting the "one malformed message retries forever" problem
+      while testing. Verified end-to-end by hand: sent a message
+      straight to SQS, watched it show up in DynamoDB. The worker-side
+      wiring itself hasn't been verified live yet (EC2 instances were
+      torn down after Phase 6.5 to save cost) - next time the cluster
+      is recreated, redeploy and confirm a real monitor going `down`
+      produces a DynamoDB record.
 - [ ] **API test suite (pytest)**: also not tied to a numbered infra phase —
       needed before/during Phase 8, since a CI pipeline with an empty test
       stage isn't much of one.

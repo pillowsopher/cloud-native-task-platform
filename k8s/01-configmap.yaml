@@ -5,3 +5,5 @@ metadata:
   namespace: uptime-monitor
 data:
   REDIS_URL: "redis://redis:6379/0"
+  SQS_QUEUE_NAME: "uptime-monitor-notifications"
+  AWS_DEFAULT_REGION: "ap-south-1"

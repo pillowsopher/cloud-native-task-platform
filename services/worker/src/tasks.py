@@ -1,8 +1,11 @@
 """ This module defines tasks that would be performed by Celery"""
+import json
 import logging
+import os
 from datetime import datetime, timedelta, timezone
 
 import requests
+import boto3
 
 from src.celery_app import app
 from src.database import SessionLocal
@@ -57,8 +60,7 @@ def check_monitor(monitor_id: int):
         db.close()
 
 
-# This task is supposed to send notification if an email id is provided and notify email flag is set to True,
-# Currently, it is just logging data since we don't have SES or Lambda service attached to it.
+# This task is used to trigger SQS notifications, which in turn call Lambda functions, and send data to DynamoDB
 @app.task(name="src.tasks.send_notification")
 def send_notification(monitor_id: int):
     db = SessionLocal()
@@ -68,6 +70,16 @@ def send_notification(monitor_id: int):
             return
         logger.info("Would email %s: monitor '%s' (%s) is DOWN!",
                     monitor.notify_email, monitor.name, monitor.url)
+
+        sqs = boto3.client("sqs")
+        queue_url = sqs.get_queue_url(QueueName=os.environ["SQS_QUEUE_NAME"])["QueueUrl"]
+        sqs.send_message(
+            QueueUrl=queue_url,
+            MessageBody=json.dumps({
+                "monitor_id": monitor.id,
+                "monitor_name": monitor.name,
+                "status": monitor.status,
+            }),
+        )
     finally:
         db.close()
-

@@ -28,6 +28,7 @@ dependencies/
 # Lambda build artifacts
 **/lambda/**/function.zip
 **/lambda/**/node_modules/
+**/terraform/**/*.zip
 
 # k8s real secrets (keep only the .example.yaml in git)
 **/k8s/02-secret.yaml
