@@ -78,6 +78,11 @@ services/api/             FastAPI app (source of truth, actively built)
   src/database.py          SQLAlchemy engine/session setup, reads DATABASE_URL
   src/models.py             SQLAlchemy ORM model (Monitor -> monitors table)
   requirements.txt         Pinned dependencies (pip)
+  requirements-dev.txt      Test-only dependencies (pytest, httpx)
+  pytest.ini                 pythonpath = . so `src` imports resolve
+  tests/conftest.py           Swaps in SQLite before any src import, plus
+                          the autouse table-reset and TestClient fixtures
+  tests/test_monitors.py      healthz + full CRUD + validation-failure tests
   Dockerfile                Multi-stage, non-root runtime user
   .dockerignore             Excludes venv/, __pycache__/, etc. from the
                           image build context
@@ -202,9 +207,17 @@ not the live implementation.
       torn down after Phase 6.5 to save cost) - next time the cluster
       is recreated, redeploy and confirm a real monitor going `down`
       produces a DynamoDB record.
-- [ ] **API test suite (pytest)**: also not tied to a numbered infra phase —
+- [x] **API test suite (pytest)**: also not tied to a numbered infra phase —
       needed before/during Phase 8, since a CI pipeline with an empty test
-      stage isn't much of one.
+      stage isn't much of one. Uses FastAPI's `TestClient` against a
+      SQLite database (swapped in via `DATABASE_URL` before any `src`
+      import happens, so the app never touches real Postgres), with an
+      `autouse` fixture that drops/recreates tables before every test for
+      isolation. `pytest.ini` sets `pythonpath = .` so `src` imports
+      resolve without installing the package. 10 tests covering `/healthz`,
+      full monitor CRUD (create/list/get/update/delete, including 404s for
+      an unknown ID), and a validation-failure case (missing required
+      field → 422).
 - [ ] **Phase 8 — GitLab CI/CD**: automated lint/test/build/deploy pipeline.
       Specifically needs to replace these manual steps from Phase 6.5:
   - Build + push `api`/`worker` images to ECR (currently: `docker build`,
