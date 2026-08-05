@@ -25,17 +25,18 @@ test:
 
 build_api:
   stage: build
-  image: docker:24
+  image: debian:12-slim
   services:
     - docker:24-dind
   variables:
-    DOCKER_TLS_CERTDIR: "/certs"
+    DOCKER_HOST: tcp://docker:2375
+    DOCKER_TLS_CERTDIR: ""
   id_tokens:
     AWS_TOKEN:
       aud: https://gitlab.com
   script:
-    - apk update
-    - apk add --no-cache aws-cli
+    - apt-get update
+    - apt-get install -y --no-install-recommends docker.io awscli ca-certificates
     - echo "$AWS_TOKEN" > /tmp/token
     - export AWS_ROLE_ARN=$AWS_ROLE_ARN
     - export AWS_WEB_IDENTITY_TOKEN_FILE=/tmp/token
@@ -48,17 +49,18 @@ build_api:
 
 build_worker:
   stage: build
-  image: docker:24
+  image: debian:12-slim
   services:
     - docker:24-dind
   variables:
-    DOCKER_TLS_CERTDIR: "/certs"
+    DOCKER_HOST: tcp://docker:2375
+    DOCKER_TLS_CERTDIR: ""
   id_tokens:
     AWS_TOKEN:
       aud: https://gitlab.com
   script:
-    - apk update
-    - apk add --no-cache aws-cli
+    - apt-get update
+    - apt-get install -y --no-install-recommends docker.io awscli ca-certificates
     - echo "$AWS_TOKEN" > /tmp/token
     - export AWS_ROLE_ARN=$AWS_ROLE_ARN
     - export AWS_WEB_IDENTITY_TOKEN_FILE=/tmp/token
@@ -71,15 +73,13 @@ build_worker:
 
 deploy:
   stage: deploy
-  image: docker:24
-  services:
-    - docker:24-dind
+  image: debian:12-slim
   id_tokens:
     AWS_TOKEN:
       aud: https://gitlab.com
   script:
-    - apk update
-    - apk add --no-cache aws-cli
+    - apt-get update
+    - apt-get install -y --no-install-recommends awscli ca-certificates
     - echo "$AWS_TOKEN" > /tmp/token
     - export AWS_ROLE_ARN=$AWS_ROLE_ARN
     - export AWS_WEB_IDENTITY_TOKEN_FILE=/tmp/token
