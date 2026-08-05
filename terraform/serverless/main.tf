@@ -126,3 +126,4 @@ resource "aws_iam_role_policy" "ec2_sqs_send" {
     ]
   })
 }
+
