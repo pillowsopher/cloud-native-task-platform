@@ -65,7 +65,6 @@ Ingress, ConfigMaps/Secrets, HPA — for $0.
 | Orchestration | k3s on EC2 (free tier) | Deployments, Services, Ingress, HPA |
 | CI/CD | GitLab CI | lint/test → build → push to ECR → deploy to k3s + Lambda |
 | IaC | Terraform | VPC, EC2, security groups, IAM, ECR, Lambda, DynamoDB, SQS |
-| Observability | Prometheus + Grafana (in-cluster), CloudWatch (Lambda side) | Metrics/dashboards |
 
 ## Repo layout
 
@@ -260,138 +259,38 @@ not the live implementation.
       has to be a literal `--docker-password=` argument), and copying
       `k8s/*.yaml` unfiltered picked up `01-secret.example.yaml` and
       silently overwrote the real Secret with its placeholder password.
-- [~] **Phase 9 — Monitoring**: skipped, deliberately. While verifying
-      Phase 8 above, `k3s-server` was directly observed thrashing under
-      real memory pressure (t3.micro's 1GB RAM, ~100Mi available, ~700Mi
-      of the 1GB swap file in use, a control-plane query taking 7m47s) just
-      running the existing workload (Postgres, Redis, 2x api, worker, beat,
-      Traefik). Adding Prometheus + Grafana on top of that would make an
-      already-tight node worse, not better - this isn't a hypothetical
-      concern, it's the actual ceiling this project hit. Revisiting this
-      would mean trimming the existing footprint first (e.g. `api` back to
-      1 replica, since HPA can't act on 2 without metrics-server anyway),
-      not just adding more to the same box.
 
-## Current infra state: torn down
+      While verifying this phase, `k3s-server` was directly observed
+      thrashing under real memory pressure (t3.micro's 1GB RAM, ~100Mi
+      available, ~700Mi of the 1GB swap file in use, a control-plane query
+      taking 7m47s) just running the existing workload (Postgres, Redis,
+      2x api, worker, beat, Traefik). That's the practical resource
+      ceiling of this setup - worth knowing before deploying anything
+      heavier onto the same node without first trimming the existing
+      footprint (e.g. `api` back to 1 replica, since HPA can't act on 2
+      without metrics-server anyway).
 
-As of the last session, **all AWS infrastructure has been destroyed** -
-`terraform/bootstrap/`, `terraform/main.tf`, and `terraform/serverless/` were
-all `terraform destroy`'d. This is a personal learning project with no one
-depending on its uptime, so there's no reason to keep paying free-tier hours
-(or holding a t3.micro that's already near its resource ceiling, see Phase 9
-above) for a cluster nobody's using. Everything above is still fully defined
-as code and reproducible from scratch:
+## Current infra state
 
-```powershell
-cd terraform/bootstrap
-terraform init
-terraform apply
+**All AWS infrastructure has been torn down** — `terraform destroy` across
+`terraform/bootstrap/`, `terraform/main.tf`, and `terraform/serverless/`.
+This is a personal learning project with no one depending on its uptime, so
+there's no reason to keep paying free-tier hours (or holding a t3.micro
+that's already near its resource ceiling — see the Phase 8 note above) for a
+cluster nobody's using. Everything is still fully defined as code; the
+[Setup](#setup) section below is the exact path back to a running stack.
 
-cd ..
-terraform init -backend-config=backend.hcl
-terraform apply
+## Setup
 
-cd serverless
-terraform init -backend-config=backend.hcl
-terraform apply
-```
+Going from a fresh clone to a fully running stack, in order. Steps 2-6 need
+an AWS account; skip straight to step 1 if you just want the app running
+locally.
 
-(`bootstrap` must go first - it creates the S3/DynamoDB backend the other
-two depend on. `serverless` must go after `main.tf` - it cross-references
-the `ec2_ecr` IAM role via a `data` source, which fails to even plan if that
-role doesn't exist yet.) After `main.tf`, you'd still need to redo the
-Phase 6.5/8 app deploy (or just re-run the GitLab pipeline against `main`)
-to get the actual application running again, and manually re-apply
-`k8s/02-secret.yaml` since it's gitignored and never touched by CI.
+### 1. Local development only (no AWS needed)
 
-## Local-only files (gitignored, recreate these yourself)
-
-A few files are required to actually run this project but are deliberately
-not committed. To reproduce a working setup from scratch:
-
-- **`k8s/02-secret.yaml`** — copy `k8s/01-secret.example.yaml` to
-  `k8s/02-secret.yaml` and fill in real values for `POSTGRES_PASSWORD` and
-  `DATABASE_URL` (must use the same password in both places — see the
-  Phase 4 debugging story in git history for what happens if they drift).
-- **AWS SSO profile** — run `aws configure sso` and name the profile
-  `uptime-monitor` (this exact name is referenced throughout `terraform/`
-  and by any AWS CLI commands used in this project). Requires an IAM
-  Identity Center permission set already assigned to your AWS account —
-  see Phase 5 in Progress above for how that was set up.
-- **EC2 key pair** — create one in the AWS Console named
-  `uptime-monitor-key` (must match `key_name` in `terraform/main.tf`),
-  download the `.pem`, and keep it somewhere local (referenced by full
-  path when SSHing, e.g. `ssh -i "C:\path\to\uptime-monitor-key.pem"
-  ubuntu@<instance-ip>`).
-- **`terraform/terraform.tfvars`** — create with your own public IP
-  (used to scope the security group's SSH rule to just you):
-  ```hcl
-  my_ip = "YOUR_PUBLIC_IP/32"
-  ```
-- **`terraform/backend.hcl`** — `terraform/main.tf` uses a deliberately
-  empty `backend "s3" {}` block (backend config can't reference variables
-  or data sources, so hardcoding real values there would mean committing
-  your AWS account ID). The actual values are supplied at `init` time from
-  this gitignored file instead:
-  ```hcl
-  bucket         = "uptime-monitor-terraform-state-<your-account-id>"
-  key            = "uptime-monitor/terraform.tfstate"
-  region         = "ap-south-1"
-  dynamodb_table = "uptime-monitor-terraform-lock"
-  encrypt        = true
-  profile        = "uptime-monitor"
-  ```
-- **Terraform state** — apply the bootstrap config first (creates the S3
-  bucket + DynamoDB table other Terraform state lives in, using local
-  state since it can't depend on a backend it's creating), then the main
-  config, passing the backend file explicitly:
-  ```powershell
-  cd terraform/bootstrap
-  terraform init
-  terraform apply
-
-  cd ..
-  terraform init -backend-config=backend.hcl
-  terraform apply
-  ```
-
-## Known issues / environment workarounds
-
-None of these are conceptual problems with the project — they're quirks of
-this specific Windows/Docker Desktop machine, documented so future-me (or
-anyone else) doesn't waste time rediscovering them:
-
-- **Docker Desktop's image store is separate from its Kubernetes node's
-  containerd**, unless "Use containerd for pulling and storing images" is
-  enabled — and enabling it breaks this machine's Kubernetes cluster from
-  starting at all. Workaround: `scripts/k8s-load-image.ps1` loads a locally
-  built image directly into the node's containerd via `nsenter` + `ctr`,
-  bypassing `docker build`'s separate store entirely. Local-only, gitignored.
-- **`docker login` fails with a 400 Bad Request** against ECR on this Docker
-  Desktop version (client-side bug — the credentials themselves are valid,
-  confirmed via a raw `curl` Basic-auth request). The official
-  `amazon-ecr-credential-helper` also fails separately ("credentials not
-  found in native keychain", a Windows-specific bug). Workaround:
-  `scripts/ecr-login.ps1` writes the base64 auth entry directly into
-  Docker's config, same as a working `docker login` would.
-- **PowerShell mangles `-backend-config=path`-style flags** passed to
-  native executables (Terraform, in our case) — wrap the whole flag in
-  quotes: `terraform init "-backend-config=backend.hcl"`.
-- **Windows PowerShell 5.1's `-Encoding utf8` writes a BOM**, which Docker's
-  Go-based JSON parser can't handle. Any script writing `~/.docker/config.json`
-  needs `[System.Text.UTF8Encoding]::new($false)` instead (see
-  `scripts/ecr-login.ps1`).
-- **`t3.micro`'s 1GB RAM isn't enough for k3s's control plane alone** —
-  the server would become unresponsive (API server hangs mid-TLS-handshake,
-  `"container runtime is down"` in the logs) without a swap file. Handled
-  automatically now via Terraform `user_data` on both instances, but worth
-  knowing why that swap file exists if you ever wonder.
-
-## Running the full stack (current)
-
-The API now requires a real Postgres connection (`DATABASE_URL` is required,
-no silent fallback), so the supported way to run it is via Docker Compose,
-which brings up Postgres + Redis + the API together:
+The API requires a real Postgres connection (`DATABASE_URL` is required, no
+silent fallback), so the supported way to run it locally is via Docker
+Compose, which brings up Postgres + Redis + the API together:
 
 ```
 copy .env.example .env
@@ -427,6 +326,161 @@ venv\Scripts\activate
 $env:DATABASE_URL = "postgresql://postgres:postgres@localhost:5432/uptime_monitor"
 uvicorn src.main:app --reload --port 3000
 ```
+
+### 2. AWS account
+
+- **IAM Identity Center (SSO) profile** — run `aws configure sso` and name
+  the profile `uptime-monitor` (this exact name is referenced throughout
+  `terraform/` and by every AWS CLI command used in this project). Requires
+  an IAM Identity Center permission set already assigned to your AWS
+  account — see Phase 5 in Progress above for how that was originally set
+  up. Re-authenticate any time with `aws sso login --profile uptime-monitor`.
+- **EC2 key pair** — create one in the AWS Console named
+  `uptime-monitor-key` (must match `key_name` in `terraform/main.tf`),
+  download the `.pem`, and keep it somewhere local (referenced by full path
+  when SSHing, e.g. `ssh -i "C:\path\to\uptime-monitor-key.pem"
+  ubuntu@<instance-ip>`).
+
+### 3. Terraform — provision the infrastructure
+
+A few gitignored files need to exist first:
+
+- **`terraform/terraform.tfvars`** — your own public IP, used to scope the
+  security group's SSH rule to just you (check it with
+  `curl https://checkip.amazonaws.com` — home/ISP IPs change over time, so
+  re-check this if SSH ever starts timing out):
+  ```hcl
+  my_ip = "YOUR_PUBLIC_IP/32"
+  ```
+- **`terraform/backend.hcl`** — `terraform/main.tf` uses a deliberately
+  empty `backend "s3" {}` block (backend config can't reference variables
+  or data sources, so hardcoding real values there would mean committing
+  your AWS account ID). The actual values are supplied at `init` time from
+  this gitignored file instead:
+  ```hcl
+  bucket         = "uptime-monitor-terraform-state-<your-account-id>"
+  key            = "uptime-monitor/terraform.tfstate"
+  region         = "ap-south-1"
+  dynamodb_table = "uptime-monitor-terraform-lock"
+  encrypt        = true
+  profile        = "uptime-monitor"
+  ```
+- **`terraform/serverless/backend.hcl`** — same idea, separate state file in
+  the same bucket:
+  ```hcl
+  bucket         = "uptime-monitor-terraform-state-<your-account-id>"
+  key            = "uptime-monitor-serverless/terraform.tfstate"
+  region         = "ap-south-1"
+  dynamodb_table = "uptime-monitor-terraform-lock"
+  encrypt        = true
+  profile        = "uptime-monitor"
+  ```
+
+Then apply in this order — `bootstrap` first (it creates the S3/DynamoDB
+backend the other two configs depend on, using local state since it can't
+depend on a backend it's creating), `main.tf` second, `serverless` last
+(it cross-references the `ec2_ecr` IAM role from `main.tf` via a `data`
+source, which fails to even plan if that role doesn't exist yet):
+
+```powershell
+cd terraform/bootstrap
+terraform init
+terraform apply
+
+cd ..
+terraform init "-backend-config=backend.hcl"
+terraform apply
+
+cd serverless
+terraform init "-backend-config=backend.hcl"
+terraform apply
+```
+
+`main.tf` provisions the VPC, both EC2 instances (k3s bootstraps itself
+automatically via `user_data` on first boot — no manual SSH steps needed),
+ECR repos, and the IAM/OIDC trust GitLab CI needs. Give the instances a few
+minutes after `apply` finishes to actually finish joining as a cluster.
+
+### 4. Kubernetes secret (one-time, manual — never touched by CI)
+
+Copy `k8s/01-secret.example.yaml` to `k8s/02-secret.yaml` and fill in real
+values for `POSTGRES_PASSWORD` and `DATABASE_URL` (must use the same
+password in both places — see the Phase 4 debugging story in git history
+for what happens if they drift). This file is gitignored on purpose and
+deliberately excluded from what CI deploys, so it has to be applied by hand
+once the cluster exists:
+
+```powershell
+scp -i "C:\path\to\uptime-monitor-key.pem" k8s\02-secret.yaml ubuntu@<k3s-server-ip>:/tmp/
+ssh -i "C:\path\to\uptime-monitor-key.pem" ubuntu@<k3s-server-ip> "sudo k3s kubectl apply -f /tmp/02-secret.yaml"
+```
+
+If the `uptime-monitor` namespace doesn't exist yet (true on a genuinely
+fresh cluster), run this after the first deploy (step 6) instead — the API/
+worker pods will simply wait/retry until the Secret shows up.
+
+### 5. GitLab CI/CD
+
+The pipeline (`.gitlab-ci.yml`) lives on a GitLab mirror of this repo — kept
+separate from GitHub specifically for GitLab's free CI/CD minutes.
+
+- Create a blank GitLab project (don't let it auto-initialize with a
+  README/`.gitignore`), then add it as a second remote and push:
+  ```
+  git remote add gitlab git@gitlab.com:<your-namespace>/cloud-native-uptime-monitor.git
+  git push gitlab main
+  ```
+- Add your existing SSH public key (the same one used for GitHub, if you
+  have one — `~/.ssh/id_ed25519.pub`) under GitLab's
+  **User Settings → SSH Keys**.
+- Add one CI/CD variable (**Settings → CI/CD → Variables**): key
+  `AWS_ROLE_ARN`, masked, value from:
+  ```
+  aws iam get-role --role-name uptime-monitor-gitlab-ci-role --query Role.Arn --output text --profile uptime-monitor
+  ```
+  This is what lets GitLab's OIDC-issued token exchange for temporary AWS
+  credentials — no long-lived AWS keys are ever stored in GitLab.
+
+### 6. First deploy
+
+Once steps 3 and 5 are done, push to `main` — the pipeline builds and pushes
+both images (tagged with the commit SHA) and deploys the manifests to
+`k3s-server` automatically (`Build → Pipelines` in GitLab to watch it run).
+This replaces every manual step from the original Phase 6.5 setup
+(`docker build`/`push` by hand, `scp`+`sed`+`kubectl apply` over SSH,
+manually refreshing the ECR pull secret).
+
+## Known issues / environment workarounds
+
+None of these are conceptual problems with the project — they're quirks of
+this specific Windows/Docker Desktop machine, documented so future-me (or
+anyone else) doesn't waste time rediscovering them:
+
+- **Docker Desktop's image store is separate from its Kubernetes node's
+  containerd**, unless "Use containerd for pulling and storing images" is
+  enabled — and enabling it breaks this machine's Kubernetes cluster from
+  starting at all. Workaround: `scripts/k8s-load-image.ps1` loads a locally
+  built image directly into the node's containerd via `nsenter` + `ctr`,
+  bypassing `docker build`'s separate store entirely. Local-only, gitignored.
+- **`docker login` fails with a 400 Bad Request** against ECR on this Docker
+  Desktop version (client-side bug — the credentials themselves are valid,
+  confirmed via a raw `curl` Basic-auth request). The official
+  `amazon-ecr-credential-helper` also fails separately ("credentials not
+  found in native keychain", a Windows-specific bug). Workaround:
+  `scripts/ecr-login.ps1` writes the base64 auth entry directly into
+  Docker's config, same as a working `docker login` would.
+- **PowerShell mangles `-backend-config=path`-style flags** passed to
+  native executables (Terraform, in our case) — wrap the whole flag in
+  quotes: `terraform init "-backend-config=backend.hcl"`.
+- **Windows PowerShell 5.1's `-Encoding utf8` writes a BOM**, which Docker's
+  Go-based JSON parser can't handle. Any script writing `~/.docker/config.json`
+  needs `[System.Text.UTF8Encoding]::new($false)` instead (see
+  `scripts/ecr-login.ps1`).
+- **`t3.micro`'s 1GB RAM isn't enough for k3s's control plane alone** —
+  the server would become unresponsive (API server hangs mid-TLS-handshake,
+  `"container runtime is down"` in the logs) without a swap file. Handled
+  automatically now via Terraform `user_data` on both instances, but worth
+  knowing why that swap file exists if you ever wonder.
 
 ## License
 
