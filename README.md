@@ -246,9 +246,63 @@ not the live implementation.
       credentials. A kubelet ECR credential-provider plugin would still be
       a more correct long-term fix than refreshing a Secret at all, but is
       out of scope for this pass.
-- [ ] **Phase 9 — Monitoring**: Prometheus + Grafana deployed, *and* the
-      API instrumented with its own `/metrics` endpoint (`prometheus-client`)
-      — without this there's nothing app-specific for Prometheus to scrape.
+
+      Verified end-to-end: a real push through `lint`/`test`/`build`/
+      `deploy` went green, with `kubectl` on `k3s-server` showing the
+      deployment running the freshly-built commit-SHA-tagged image.
+      Getting there surfaced several real bugs, worth remembering: Alpine's
+      `apk`-packaged `aws-cli` has a broken `pyexpat`/`expat` ABI on this
+      image (switched CI jobs to `debian:12-slim` + `apt`), `s3 sync`
+      needs `s3:ListBucket`/`s3:DeleteObject` in addition to `PutObject`/
+      `GetObject` (bucket-level vs. object-level ARNs are separate IAM
+      grants), `kubectl create secret docker-registry` has no
+      `--docker-password-stdin` flag (unlike `docker login` - the password
+      has to be a literal `--docker-password=` argument), and copying
+      `k8s/*.yaml` unfiltered picked up `01-secret.example.yaml` and
+      silently overwrote the real Secret with its placeholder password.
+- [~] **Phase 9 — Monitoring**: skipped, deliberately. While verifying
+      Phase 8 above, `k3s-server` was directly observed thrashing under
+      real memory pressure (t3.micro's 1GB RAM, ~100Mi available, ~700Mi
+      of the 1GB swap file in use, a control-plane query taking 7m47s) just
+      running the existing workload (Postgres, Redis, 2x api, worker, beat,
+      Traefik). Adding Prometheus + Grafana on top of that would make an
+      already-tight node worse, not better - this isn't a hypothetical
+      concern, it's the actual ceiling this project hit. Revisiting this
+      would mean trimming the existing footprint first (e.g. `api` back to
+      1 replica, since HPA can't act on 2 without metrics-server anyway),
+      not just adding more to the same box.
+
+## Current infra state: torn down
+
+As of the last session, **all AWS infrastructure has been destroyed** -
+`terraform/bootstrap/`, `terraform/main.tf`, and `terraform/serverless/` were
+all `terraform destroy`'d. This is a personal learning project with no one
+depending on its uptime, so there's no reason to keep paying free-tier hours
+(or holding a t3.micro that's already near its resource ceiling, see Phase 9
+above) for a cluster nobody's using. Everything above is still fully defined
+as code and reproducible from scratch:
+
+```powershell
+cd terraform/bootstrap
+terraform init
+terraform apply
+
+cd ..
+terraform init -backend-config=backend.hcl
+terraform apply
+
+cd serverless
+terraform init -backend-config=backend.hcl
+terraform apply
+```
+
+(`bootstrap` must go first - it creates the S3/DynamoDB backend the other
+two depend on. `serverless` must go after `main.tf` - it cross-references
+the `ec2_ecr` IAM role via a `data` source, which fails to even plan if that
+role doesn't exist yet.) After `main.tf`, you'd still need to redo the
+Phase 6.5/8 app deploy (or just re-run the GitLab pipeline against `main`)
+to get the actual application running again, and manually re-apply
+`k8s/02-secret.yaml` since it's gitignored and never touched by CI.
 
 ## Local-only files (gitignored, recreate these yourself)
 
