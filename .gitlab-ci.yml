@@ -87,6 +87,7 @@ deploy:
     - ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
     - mkdir /tmp/manifests
     - cp k8s/*.yaml /tmp/manifests/
+    - rm -f /tmp/manifests/*.example.yaml
     - sed -i "s|<AWS_ACCOUNT_ID>|$ACCOUNT_ID|g; s|<IMAGE_TAG>|$CI_COMMIT_SHORT_SHA|g" /tmp/manifests/*.yaml
     - aws s3 sync /tmp/manifests "s3://uptime-monitor-deploy-manifests-$ACCOUNT_ID/manifests/" --delete
     - aws s3 cp scripts/remote-deploy.sh "s3://uptime-monitor-deploy-manifests-$ACCOUNT_ID/remote-deploy.sh"

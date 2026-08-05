@@ -395,9 +395,16 @@ resource "aws_iam_role_policy" "ec2_s3_manifests" {
     Version = "2012-10-17"
     Statement = [
       {
+        Sid      = "GetObjects"
         Effect   = "Allow"
         Action   = "s3:GetObject"
         Resource = "${aws_s3_bucket.deploy_manifests.arn}/*"
+      },
+      {
+        Sid      = "ListBucket"
+        Effect   = "Allow"
+        Action   = "s3:ListBucket"
+        Resource = aws_s3_bucket.deploy_manifests.arn
       }
     ]
   })
