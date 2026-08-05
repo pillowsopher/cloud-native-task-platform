@@ -34,6 +34,7 @@ build_api:
     AWS_TOKEN:
       aud: https://gitlab.com
   script:
+    - apk update
     - apk add --no-cache aws-cli
     - echo "$AWS_TOKEN" > /tmp/token
     - export AWS_ROLE_ARN=$AWS_ROLE_ARN
@@ -56,6 +57,7 @@ build_worker:
     AWS_TOKEN:
       aud: https://gitlab.com
   script:
+    - apk update
     - apk add --no-cache aws-cli
     - echo "$AWS_TOKEN" > /tmp/token
     - export AWS_ROLE_ARN=$AWS_ROLE_ARN
@@ -76,6 +78,7 @@ deploy:
     AWS_TOKEN:
       aud: https://gitlab.com
   script:
+    - apk update
     - apk add --no-cache aws-cli
     - echo "$AWS_TOKEN" > /tmp/token
     - export AWS_ROLE_ARN=$AWS_ROLE_ARN
