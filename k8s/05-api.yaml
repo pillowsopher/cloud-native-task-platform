@@ -17,7 +17,7 @@ spec:
         - name: ecr-registry-credentials
       containers:
         - name: api
-          image: <AWS_ACCOUNT_ID>.dkr.ecr.ap-south-1.amazonaws.com/uptime-monitor-api:latest
+          image: <AWS_ACCOUNT_ID>.dkr.ecr.ap-south-1.amazonaws.com/uptime-monitor-api:<IMAGE_TAG>
           imagePullPolicy: Always
           ports:
             - containerPort: 3000

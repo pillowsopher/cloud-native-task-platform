@@ -20,6 +20,7 @@ provider "aws" {
   profile = "uptime-monitor"
 }
 
+# The network everything else lives in
 resource "aws_vpc" "main" {
   cidr_block = "10.0.0.0/16"
 
@@ -28,6 +29,7 @@ resource "aws_vpc" "main" {
   }
 }
 
+# Public subnet the EC2 instances launch into (auto-assigns public IPs)
 resource "aws_subnet" "public" {
   vpc_id = aws_vpc.main.id
   cidr_block = "10.0.1.0/24"
@@ -39,6 +41,7 @@ resource "aws_subnet" "public" {
   }
 }
 
+# Gives the VPC a path to/from the internet
 resource "aws_internet_gateway" "main" {
   vpc_id = aws_vpc.main.id
 
@@ -47,6 +50,7 @@ resource "aws_internet_gateway" "main" {
   }
 }
 
+# Routes 0.0.0.0/0 traffic out through the internet gateway
 resource "aws_route_table" "public" {
   vpc_id = aws_vpc.main.id
 
@@ -60,11 +64,15 @@ resource "aws_route_table" "public" {
   }
 }
 
+# Wires the route table above to the actual subnet
 resource "aws_route_table_association" "public" {
   subnet_id = aws_subnet.public.id
   route_table_id = aws_route_table.public.id
 }
 
+# Firewall for both EC2 instances: SSH (me only), HTTP/S (public), and
+# k3s's own inter-node ports (API, Flannel VXLAN, kubelet), self-referencing
+# so the two instances can always reach each other regardless of my IP
 resource "aws_security_group" "main" {
   name = "uptime-monitor-sg"
   description = "Uptime monitor app + SSH access"
@@ -130,6 +138,8 @@ resource "aws_security_group" "main" {
   }
 }
 
+# k3s control plane node - user_data bootstraps swap (needed on t3.micro)
+# and installs k3s as the server on first boot
 resource "aws_instance" "k3s_server" {
   ami = "ami-006f82a1d5a27da54"
   instance_type = "t3.micro"
@@ -153,6 +163,8 @@ resource "aws_instance" "k3s_server" {
   }
 }
 
+# k3s worker node - joins k3s_server using the shared token, retries with
+# backoff on its own until the server is reachable (no ordering logic needed)
 resource "aws_instance" "k3s_agent" {
   ami = "ami-006f82a1d5a27da54"
   instance_type = "t3.micro"
@@ -176,6 +188,7 @@ resource "aws_instance" "k3s_agent" {
   }
 }
 
+# Image registry for the api service
 resource "aws_ecr_repository" "api" {
   name = "uptime-monitor-api"
   image_tag_mutability = "MUTABLE"
@@ -185,6 +198,7 @@ resource "aws_ecr_repository" "api" {
   }
 }
 
+# Image registry for the worker/beat service
 resource "aws_ecr_repository" "worker" {
   name = "uptime-monitor-worker"
   image_tag_mutability = "MUTABLE"
@@ -194,6 +208,8 @@ resource "aws_ecr_repository" "worker" {
   }
 }
 
+# Role the EC2 instances assume (via their instance profile) so k3s/kubelet
+# can pull images from ECR without any stored credentials on the box
 resource "aws_iam_role" "ec2_ecr" {
   name = "uptime-monitor-ec2-ecr-role"
 
@@ -211,17 +227,182 @@ resource "aws_iam_role" "ec2_ecr" {
   })
 }
 
+# Grants ec2_ecr pull-only access to ECR (push happens from CI, not the node)
 resource "aws_iam_role_policy_attachment" "ec2_ecr_readonly" {
   role       = aws_iam_role.ec2_ecr.name
   policy_arn = "arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryReadOnly"
 }
 
+# EC2 can only take an IAM role via an instance profile, not the role directly
 resource "aws_iam_instance_profile" "ec2_ecr" {
   name = "uptime-monitor-ec2-ecr-profile"
   role = aws_iam_role.ec2_ecr.name
 }
 
+# Shared join token for k3s_server/k3s_agent - state-only, never written to
+# a tracked file
 resource "random_password" "k3s_token" {
   length  = 32
   special = false
+}
+
+# Registers GitLab.com as a trusted OIDC identity provider so AWS can verify
+# tokens GitLab CI issues, without any stored AWS credentials in GitLab
+resource "aws_iam_openid_connect_provider" "gitlab" {
+  url             = "https://gitlab.com"
+  client_id_list  = ["https://gitlab.com"]
+  thumbprint_list = ["a103c5e024f5c88fda2adcf9d3aa4a15dabb9fbc"]
+}
+
+# Role our GitLab CI pipeline assumes via OIDC - scoped by condition to only
+# this project's main branch, so no other GitLab project/branch can use it
+resource "aws_iam_role" "gitlab_ci" {
+  name = "uptime-monitor-gitlab-ci-role"
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Action    = "sts:AssumeRoleWithWebIdentity"
+        Effect    = "Allow"
+        Principal = {
+          Federated = aws_iam_openid_connect_provider.gitlab.arn
+        }
+        Condition = {
+          StringEquals = {
+            "gitlab.com:aud" = "https://gitlab.com"
+            "gitlab.com:sub" = "project_path:pillowsopher/cloud-native-uptime-monitor:ref_type:branch:ref:main"
+          }
+        }
+      }
+    ]
+  })
+}
+
+# Lets gitlab_ci actually push images to ECR: log in (GetAuthorizationToken,
+# account-wide only) plus the layer/manifest upload actions, scoped to our repos
+resource "aws_iam_role_policy" "gitlab_ci_ecr_push" {
+  name = "ecr-push"
+  role = aws_iam_role.gitlab_ci.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Sid      = "GetAuthToken"
+        Action   = "ecr:GetAuthorizationToken"
+        Effect   = "Allow"
+        Resource = "*"
+      },
+      {
+        Sid    = "PushImages"
+        Effect = "Allow"
+        Action = [
+          "ecr:BatchCheckLayerAvailability",
+          "ecr:PutImage",
+          "ecr:InitiateLayerUpload",
+          "ecr:UploadLayerPart",
+          "ecr:CompleteLayerUpload",
+        ]
+        Resource = [
+          aws_ecr_repository.api.arn,
+          aws_ecr_repository.worker.arn,
+        ]
+      }
+    ]
+  })
+}
+
+# Lets the SSM agent on both instances register with AWS and receive commands,
+# so GitLab CI can run deploy commands without SSH/an open inbound port
+resource "aws_iam_role_policy_attachment" "ec2_ssm" {
+  role       = aws_iam_role.ec2_ecr.name
+  policy_arn = "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"
+}
+
+# Lets gitlab_ci send SSM commands to k3s_server (deploy) and read back the
+# result - the actual "remote kubectl apply without SSH" mechanism
+resource "aws_iam_role_policy" "gitlab_ci_ssm_deploy" {
+  name = "ssm-deploy"
+  role = aws_iam_role.gitlab_ci.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Sid    = "SendCommand"
+        Effect = "Allow"
+        Action = "ssm:SendCommand"
+        Resource = [
+          aws_instance.k3s_server.arn,
+          "arn:aws:ssm:ap-south-1::document/AWS-RunShellScript",
+        ]
+      },
+      {
+        Sid      = "ReadCommandResult"
+        Effect   = "Allow"
+        Action   = "ssm:GetCommandInvocation"
+        Resource = "*"
+      }
+    ]
+  })
+}
+
+# Used to make the manifests bucket name globally unique below
+data "aws_caller_identity" "current" {}
+
+# Hand-off point for deploy: SSM can run commands but can't copy files, so CI
+# uploads rendered manifests here and the SSM command downloads them from here
+resource "aws_s3_bucket" "deploy_manifests" {
+  bucket = "uptime-monitor-deploy-manifests-${data.aws_caller_identity.current.account_id}"
+}
+
+# Lets gitlab_ci upload rendered manifests to the hand-off bucket
+resource "aws_iam_role_policy" "gitlab_ci_s3_manifests" {
+  name = "s3-deploy-manifests"
+  role = aws_iam_role.gitlab_ci.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect   = "Allow"
+        Action   = "s3:PutObject"
+        Resource = "${aws_s3_bucket.deploy_manifests.arn}/*"
+      }
+    ]
+  })
+}
+
+# Lets k3s_server download what CI uploaded to the hand-off bucket
+resource "aws_iam_role_policy" "ec2_s3_manifests" {
+  name = "s3-deploy-manifests-read"
+  role = aws_iam_role.ec2_ecr.name
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect   = "Allow"
+        Action   = "s3:GetObject"
+        Resource = "${aws_s3_bucket.deploy_manifests.arn}/*"
+      }
+    ]
+  })
+}
+
+resource "aws_iam_role_policy" "gitlab_ci_ec2_describe" {
+  name = "ec2-describe"
+  role = aws_iam_role.gitlab_ci.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect   = "Allow"
+        Action   = "ec2:DescribeInstances"
+        Resource = "*"
+      }
+    ]
+  })
 }

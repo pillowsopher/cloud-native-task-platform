@@ -1,0 +1,103 @@
+stages:
+  - lint
+  - test
+  - build
+  - deploy
+
+workflow:
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "main"'
+
+lint:
+  stage: lint
+  image: python:3.12
+  script:
+    - pip install ruff
+    - ruff check services/api services/worker
+
+test:
+  stage: test
+  image: python:3.12
+  script:
+    - cd services/api
+    - pip install -r requirements.txt -r requirements-dev.txt
+    - pytest -v
+
+build_api:
+  stage: build
+  image: docker:24
+  services:
+    - docker:24-dind
+  variables:
+    DOCKER_TLS_CERTDIR: "/certs"
+  id_tokens:
+    AWS_TOKEN:
+      aud: https://gitlab.com
+  script:
+    - apk add --no-cache aws-cli
+    - echo "$AWS_TOKEN" > /tmp/token
+    - export AWS_ROLE_ARN=$AWS_ROLE_ARN
+    - export AWS_WEB_IDENTITY_TOKEN_FILE=/tmp/token
+    - export AWS_REGION=ap-south-1
+    - ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+    - REGISTRY="$ACCOUNT_ID.dkr.ecr.ap-south-1.amazonaws.com"
+    - aws ecr get-login-password --region ap-south-1 | docker login --username AWS --password-stdin "$REGISTRY"
+    - docker build -t "$REGISTRY/uptime-monitor-api:$CI_COMMIT_SHORT_SHA" services/api
+    - docker push "$REGISTRY/uptime-monitor-api:$CI_COMMIT_SHORT_SHA"
+
+build_worker:
+  stage: build
+  image: docker:24
+  services:
+    - docker:24-dind
+  variables:
+    DOCKER_TLS_CERTDIR: "/certs"
+  id_tokens:
+    AWS_TOKEN:
+      aud: https://gitlab.com
+  script:
+    - apk add --no-cache aws-cli
+    - echo "$AWS_TOKEN" > /tmp/token
+    - export AWS_ROLE_ARN=$AWS_ROLE_ARN
+    - export AWS_WEB_IDENTITY_TOKEN_FILE=/tmp/token
+    - export AWS_REGION=ap-south-1
+    - ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+    - REGISTRY="$ACCOUNT_ID.dkr.ecr.ap-south-1.amazonaws.com"
+    - aws ecr get-login-password --region ap-south-1 | docker login --username AWS --password-stdin "$REGISTRY"
+    - docker build -t "$REGISTRY/uptime-monitor-worker:$CI_COMMIT_SHORT_SHA" services/worker
+    - docker push "$REGISTRY/uptime-monitor-worker:$CI_COMMIT_SHORT_SHA"
+
+deploy:
+  stage: deploy
+  image: docker:24
+  services:
+    - docker:24-dind
+  id_tokens:
+    AWS_TOKEN:
+      aud: https://gitlab.com
+  script:
+    - apk add --no-cache aws-cli
+    - echo "$AWS_TOKEN" > /tmp/token
+    - export AWS_ROLE_ARN=$AWS_ROLE_ARN
+    - export AWS_WEB_IDENTITY_TOKEN_FILE=/tmp/token
+    - export AWS_REGION=ap-south-1
+    - ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+    - mkdir /tmp/manifests
+    - cp k8s/*.yaml /tmp/manifests/
+    - sed -i "s|<AWS_ACCOUNT_ID>|$ACCOUNT_ID|g; s|<IMAGE_TAG>|$CI_COMMIT_SHORT_SHA|g" /tmp/manifests/*.yaml
+    - aws s3 sync /tmp/manifests "s3://uptime-monitor-deploy-manifests-$ACCOUNT_ID/manifests/" --delete
+    - aws s3 cp scripts/remote-deploy.sh "s3://uptime-monitor-deploy-manifests-$ACCOUNT_ID/remote-deploy.sh"
+    - >
+      INSTANCE_ID=$(aws ec2 describe-instances
+      --filters "Name=tag:Name,Values=k3s-server" "Name=instance-state-name,Values=running"
+      --query "Reservations[0].Instances[0].InstanceId" --output text)
+    - >
+      COMMAND_ID=$(aws ssm send-command
+      --instance-ids "$INSTANCE_ID"
+      --document-name "AWS-RunShellScript"
+      --parameters commands="aws s3 cp s3://uptime-monitor-deploy-manifests-$ACCOUNT_ID/remote-deploy.sh /tmp/remote-deploy.sh","chmod +x /tmp/remote-deploy.sh","/tmp/remote-deploy.sh $ACCOUNT_ID"
+      --query "Command.CommandId" --output text)
+    - aws ssm wait command-executed --command-id "$COMMAND_ID" --instance-id "$INSTANCE_ID" || true
+    - aws ssm get-command-invocation --command-id "$COMMAND_ID" --instance-id "$INSTANCE_ID"
+    - STATUS=$(aws ssm get-command-invocation --command-id "$COMMAND_ID" --instance-id "$INSTANCE_ID" --query Status --output text)
+    - test "$STATUS" = "Success"

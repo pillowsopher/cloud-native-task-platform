@@ -17,7 +17,7 @@ spec:
         - name: ecr-registry-credentials
       containers:
         - name: worker
-          image: <AWS_ACCOUNT_ID>.dkr.ecr.ap-south-1.amazonaws.com/uptime-monitor-worker:latest
+          image: <AWS_ACCOUNT_ID>.dkr.ecr.ap-south-1.amazonaws.com/uptime-monitor-worker:<IMAGE_TAG>
           imagePullPolicy: Always
           command:
             [
@@ -60,7 +60,7 @@ spec:
         - name: ecr-registry-credentials
       containers:
         - name: beat
-          image: <AWS_ACCOUNT_ID>.dkr.ecr.ap-south-1.amazonaws.com/uptime-monitor-worker:latest
+          image: <AWS_ACCOUNT_ID>.dkr.ecr.ap-south-1.amazonaws.com/uptime-monitor-worker:<IMAGE_TAG>
           imagePullPolicy: Always
           command: ["celery", "-A", "src.celery_app", "beat", "--loglevel=info"]
           envFrom:
