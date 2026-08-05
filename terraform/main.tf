@@ -371,9 +371,9 @@ resource "aws_iam_role_policy" "gitlab_ci_s3_manifests" {
     Version = "2012-10-17"
     Statement = [
       {
-        Sid      = "PutObjects"
+        Sid      = "PutAndDeleteObjects"
         Effect   = "Allow"
-        Action   = "s3:PutObject"
+        Action   = ["s3:PutObject", "s3:DeleteObject"]
         Resource = "${aws_s3_bucket.deploy_manifests.arn}/*"
       },
       {
