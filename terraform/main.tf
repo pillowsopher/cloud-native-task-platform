@@ -155,6 +155,11 @@ resource "aws_instance" "k3s_server" {
     mkswap /swapfile
     swapon /swapfile
     echo '/swapfile none swap sw 0 0' >> /etc/fstab
+    apt-get update && apt-get install -y unzip
+    curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "/tmp/awscliv2.zip"
+    unzip -q /tmp/awscliv2.zip -d /tmp
+    /tmp/aws/install
+    rm -rf /tmp/awscliv2.zip /tmp/aws
     curl -sfL https://get.k3s.io | K3S_TOKEN=${random_password.k3s_token.result} sh -
     EOF
 
@@ -366,9 +371,16 @@ resource "aws_iam_role_policy" "gitlab_ci_s3_manifests" {
     Version = "2012-10-17"
     Statement = [
       {
+        Sid      = "PutObjects"
         Effect   = "Allow"
         Action   = "s3:PutObject"
         Resource = "${aws_s3_bucket.deploy_manifests.arn}/*"
+      },
+      {
+        Sid      = "ListBucket"
+        Effect   = "Allow"
+        Action   = "s3:ListBucket"
+        Resource = aws_s3_bucket.deploy_manifests.arn
       }
     ]
   })
