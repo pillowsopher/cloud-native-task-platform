@@ -218,18 +218,34 @@ not the live implementation.
       full monitor CRUD (create/list/get/update/delete, including 404s for
       an unknown ID), and a validation-failure case (missing required
       field → 422).
-- [ ] **Phase 8 — GitLab CI/CD**: automated lint/test/build/deploy pipeline.
-      Specifically needs to replace these manual steps from Phase 6.5:
-  - Build + push `api`/`worker` images to ECR (currently: `docker build`,
-    `docker tag`, `docker push` by hand locally).
-  - Copy k8s manifests to `k3s-server` and `kubectl apply` them (currently:
-    `scp` the whole `k8s/` folder, `sed` the `<AWS_ACCOUNT_ID>` placeholder,
-    then `kubectl apply -f` each file by hand over SSH).
-  - Refresh the `ecr-registry-credentials` `imagePullSecrets` Secret before
-    its ~12h token expires (currently: manually re-run the `kubectl create
-    secret docker-registry ...` command). The more correct long-term fix is
-    a kubelet ECR credential-provider plugin instead of a Secret at all —
-    worth doing instead of just automating the manual refresh.
+- [x] **Phase 8 — GitLab CI/CD**: pipeline lives in `.gitlab-ci.yml`, hosted
+      on a separate GitLab mirror of this repo (GitHub stays the primary/
+      backup remote — GitLab was added specifically for its free CI/CD
+      minutes). Runs on push to `main` only:
+  - **`lint`** — `ruff` against `services/api` and `services/worker`.
+  - **`test`** — the `pytest` suite for `services/api`.
+  - **`build_api` / `build_worker`** (parallel, both in the `build` stage) —
+    build each image, tag it with the commit SHA (not `:latest`, for real
+    traceability/rollback), push to ECR.
+  - **`deploy`** — renders `k8s/*.yaml` with the real account ID and image
+    tag substituted in, hands them off to `k3s-server` via S3 (SSM Run
+    Command can execute shell commands but can't copy files, so S3 is the
+    file hand-off point), then triggers `scripts/remote-deploy.sh` on the
+    server via SSM to `kubectl apply` them and refresh the
+    `ecr-registry-credentials` Secret.
+
+      All AWS access is via GitLab's OIDC identity token exchanged for
+      temporary credentials (`aws_iam_openid_connect_provider` +
+      `aws_iam_role.gitlab_ci` in `terraform/main.tf`, scoped by condition
+      to this exact project + `main` branch) — no long-lived AWS keys
+      stored in GitLab. Deploy reaches `k3s-server` over SSM rather than
+      SSH specifically because the security group's SSH rule is locked to
+      `my_ip`, which GitLab's shared runners aren't. The instance-side
+      commands (`kubectl apply`, the Secret refresh) run under the
+      instance's own `ec2_ecr` IAM role via IMDS, not the CI job's
+      credentials. A kubelet ECR credential-provider plugin would still be
+      a more correct long-term fix than refreshing a Secret at all, but is
+      out of scope for this pass.
 - [ ] **Phase 9 — Monitoring**: Prometheus + Grafana deployed, *and* the
       API instrumented with its own `/metrics` endpoint (`prometheus-client`)
       — without this there's nothing app-specific for Prometheus to scrape.
