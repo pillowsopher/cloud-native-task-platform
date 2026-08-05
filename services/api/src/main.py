@@ -1,10 +1,10 @@
-from datetime import datetime, timezone
+from datetime import datetime
 
-from fastapi import FastAPI, HTTPException, Depends
+from fastapi import Depends, FastAPI, HTTPException
+
 #Base Model for Shape, HttpUrl for Type checking
-from pydantic import BaseModel, HttpUrl, ConfigDict
+from pydantic import BaseModel, ConfigDict, HttpUrl
 from sqlalchemy.orm import Session
-
 from src.database import Base, engine, get_db
 from src.models import Monitor
 

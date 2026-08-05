@@ -4,9 +4,8 @@ import logging
 import os
 from datetime import datetime, timedelta, timezone
 
-import requests
 import boto3
-
+import requests
 from src.celery_app import app
 from src.database import SessionLocal
 from src.models import Monitor

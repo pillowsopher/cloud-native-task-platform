@@ -5,9 +5,9 @@ os.environ["DATABASE_URL"] = "sqlite:///./test.db"
 
 import pytest
 from fastapi.testclient import TestClient
-
 from src.database import Base, engine
 from src.main import app
+
 
 # We set autouse to True here, which wipes schema without each test explicitly asking for it
 @pytest.fixture(autouse=True)

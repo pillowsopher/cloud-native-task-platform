@@ -1,6 +1,7 @@
 from sqlalchemy import Column, DateTime, Integer, String
 from src.database import Base
 
+
 class Monitor(Base):
     __tablename__ = "monitors"
 
